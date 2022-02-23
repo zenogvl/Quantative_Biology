@@ -1,0 +1,198 @@
+library(tidyverse)
+library(ggplot2)
+library(GGally)
+library(cowplot)
+library(scales)
+library(gridExtra)
+library(MASS)
+library(ggstatsplot)
+library(caret)
+
+
+### Read in the data
+data <- read.csv("Monarch_lab_6_v2.csv")
+
+### correlations 
+round(cor(data[-1,c(4,8:15)], ),2)
+
+#Resescale the data to get clearer parameters 
+data$NN <- data$NN/100000
+data$Gly <- data$Gly/10000000
+
+#correlations graphs 
+cor_p <- data %>% dplyr::select(DEVELOPMENT, Gly, NN, DROUGHT, PRECIPITATION, TMAX, TMIN, CDD) %>%
+  ggpairs(axisLabels = "show") +
+  theme_cowplot()
+
+ggsave("cor_plot.pdf", cor_p, width = 10, height = 10)
+
+
+#Names of variables 
+climate_names  <- c("DROUGHT", "PRECIPITATION", "TMIN")
+
+baseline_names <- climate_names
+dev_names <- c("DEVELOPMENT", climate_names)
+gly_names <- c("Gly", climate_names)
+nn_names <- c("NN", climate_names)
+
+model_names <-  c("Baseline", "Development", "Glyphosate", "Neonicotinoids")
+
+#Create lm formula's
+f_baseline <- LOGABUNDANCE  ~ DROUGHT+PRECIPITATION+TMIN
+f_dev <- LOGABUNDANCE  ~ DEVELOPMENT+DROUGHT+PRECIPITATION+TMIN
+f_gly <- LOGABUNDANCE  ~ Gly+DROUGHT+PRECIPITATION+TMIN
+f_nn <- LOGABUNDANCE  ~ NN+DROUGHT+PRECIPITATION+TMIN
+
+#Lm models
+mod_baseline <- lm(f_baseline, data)
+mod_dev <- lm(f_dev, data) 
+mod_gly <- lm(f_gly, data) 
+mod_nn <- lm(f_nn, data) 
+
+mod_baseline %>% summary()
+mod_dev %>% summary()
+mod_gly %>% summary()
+mod_nn %>% summary()
+
+
+#Fit v Residual plots
+FvR_baseline <-  ggplot(mod_baseline, aes(.fitted, .resid)) + 
+  geom_point() + 
+  geom_hline(yintercept=0, col="firebrick", linetype="dashed") +
+  theme_cowplot() + 
+  labs(x = "Fitted values", y = "Residuals", title = model_names[1]) 
+
+FvR_dev <-  ggplot(mod_dev, aes(.fitted, .resid)) + 
+  geom_point() + 
+  geom_hline(yintercept=0, col="firebrick", linetype="dashed") +
+  theme_cowplot() + 
+  labs(x = "Fitted values", y = "Residuals", title = model_names[2]) 
+
+FvR_gly <-  ggplot(mod_gly, aes(.fitted, .resid)) + 
+  geom_point() + 
+  geom_hline(yintercept=0, col="firebrick", linetype="dashed") +
+  theme_cowplot() + 
+  labs(x = "Fitted values", y = "Residuals", title = model_names[3]) 
+
+FvR_nn <-  ggplot(mod_nn, aes(.fitted, .resid)) + 
+  geom_point() + 
+  geom_hline(yintercept=0, col="firebrick", linetype= "dashed") +
+  theme_cowplot() + 
+  labs(x = "Fitted values", y = "Residuals", title = model_names[4]) 
+
+FvR_p <- grid.arrange(FvR_baseline, FvR_dev, FvR_gly, FvR_nn)
+
+ggsave("FvR.pdf", FvR_p, width = 10, height = 8)
+
+
+## QQ plots
+qq_baseline <- qplot(sample =.stdresid, data = mod_baseline, stat = "qq") + 
+  geom_abline(col = "firebrick") +
+  labs(x = "Theoretical", y = "Sample", title = model_names[1]) +
+  theme_cowplot() 
+
+qq_dev <- qplot(sample =.stdresid, data = mod_dev, stat = "qq") + 
+  geom_abline(col = "firebrick") +
+  labs(x = "Theoretical", y = "Sample", title = model_names[2]) +
+  theme_cowplot() 
+
+qq_gly <- qplot(sample =.stdresid, data = mod_gly, stat = "qq") + 
+  geom_abline(col = "firebrick") +
+  labs(x = "Theoretical", y = "Sample", title = model_names[3]) +
+  theme_cowplot() 
+
+qq_nn <- qplot(sample =.stdresid, data = mod_nn, stat = "qq") + 
+  geom_abline(col = "firebrick") +
+  labs(x = "Theoretical", y = "Sample", title = model_names[4]) +
+  theme_cowplot() 
+
+qq_p <- grid.arrange(qq_baseline, qq_dev, qq_gly, qq_nn)
+
+ggsave("QQ.pdf", qq_p, width = 10, height = 8)
+
+
+#Coeficients plots 
+coef_baseline <- ggcoefstats(mod_baseline) + labs(title = model_names[1])
+coef_dev <- ggcoefstats(mod_dev) + labs(title = model_names[2])
+coef_gly <- ggcoefstats(mod_gly) + labs(title = model_names[3])
+coef_nn <- ggcoefstats(mod_nn) + labs(title = model_names[4])
+
+
+coef_all <- combine_plots(plotlist =  list(coef_baseline, coef_dev, coef_gly, coef_nn),
+                          plotgrid.args = list(nrow = 2))
+
+ggsave("coef.pdf", coef_all,
+       width = 10, height = 12)
+
+
+### Parameter Bootstrapping
+N <- 10000 #bootstrap sample
+n <- nrow(data) #sample size of data
+
+f_list <- list(baseline = f_baseline,
+               dev = f_dev,
+               gly = f_gly,
+               nn = f_gly)
+
+bootstrapPar_res <- list(baseline = data.frame(matrix(NA, nrow = N, ncol = length(baseline_names) + 1)),
+                         dev = data.frame(matrix(NA, nrow = N, ncol = length(dev_names)  + 1)),
+                         gly = data.frame(matrix(NA, nrow = N, ncol = length(gly_names)  + 1)),
+                         nn = data.frame(matrix(NA, nrow = N, ncol = length(nn_names)  + 1)))
+names(bootstrapPar_res$baseline) <- c("Intercept", baseline_names)
+names(bootstrapPar_res$dev) <- c("Intercept", dev_names)
+names(bootstrapPar_res$gly) <- c("Intercept", gly_names)
+names(bootstrapPar_res$nn) <- c("Intercept", nn_names)
+
+
+bootstrapAIC_res <- data.frame(matrix(NA, nrow = N, ncol = 4))
+colnames(bootstrapAIC_res) <- c("baseline", "dev", "gly", "nn")
+
+for(i in 1:N){
+  #Create data sample
+  data_sample <- data[sample(1:n, n, replace = TRUE),]
+  
+  for(j in 1:4){
+    #Fit the 4 mdoels
+    m <- lm(f_list[[j]], data_sample)
+    
+    #Extract parameters
+    bootstrapPar_res[[j]][i,] <- summary(m)$coefficients[,1]
+    
+    #Extract AIC
+    bootstrapAIC_res[i,j] <- AIC(m)
+  }
+}
+
+h_dev <- ggplot(bootstrapPar_res$dev, aes(DEVELOPMENT)) +
+  geom_histogram(bins = 60, fill="#69b3a2", color="#e9ecef", alpha=0.9, size = .25) +
+  xlim(c(min(bootstrapPar_res$dev$DEVELOPMENT), 0)) +
+  theme_cowplot() +
+  xlab("Development")
+
+h_gly <- ggplot(bootstrapPar_res$gly, aes(Gly)) +
+  geom_histogram(bins = 60, fill="#69b3a2", color="#e9ecef", alpha=0.9, size = .25) +
+  xlim(c(min(bootstrapPar_res$gly$Gly), 0)) +
+  theme_cowplot() +
+  xlab("Glyphosate")
+
+h_nn <- ggplot(bootstrapPar_res$nn, aes(NN)) +
+  geom_histogram(bins = 60, fill="#69b3a2", color="#e9ecef", alpha=0.9, size = .25) +
+  xlim(c(min(bootstrapPar_res$nn$NN), 0)) +
+  theme_cowplot() +
+  xlab("Neonicotinoids")
+
+h_p <- grid.arrange(h_dev,h_gly,h_nn, nrow = 1)
+
+ggsave("bootshist.pdf", h_p, width = 12, height = 3)
+
+
+#Bootstrap AIC results 
+apply(bootstrapAIC_res, 1, which.min) %>% table()
+
+#leave one out cross validation using claret package
+train(f_baseline, method = "lm", data = data, trControl = trainControl(method= "LOOCV"))#MAE=1.265205
+train(f_dev, method = "lm", data = data, trControl = trainControl(method= "LOOCV"))#MAE=0.9136195
+train(f_gly, method = "lm", data = data, trControl = trainControl(method= "LOOCV"))#MAE=0.9372289
+train(f_nn, method = "lm", data = data, trControl = trainControl(method= "LOOCV"))#MAE=1.071384
+
+
